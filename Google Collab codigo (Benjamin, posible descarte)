@@ -1,0 +1,110 @@
+import requests
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+
+# ================= CONFIGURACIÓN DE USUARIO =================
+CHANNEL_ID = "1234567"       # Reemplazar con tu Channel ID
+READ_API_KEY = ""            # Dejar vacío si el canal es público
+NUM_RESULTS = 1000           # Cantidad de registros históricos a descargar (Máx 8000)
+UMBRAL_CRITICO = 35.0        # Umbral de sobrecalentamiento en °C
+# ============================================================
+
+# 1. Descarga de datos desde la API REST de ThingSpeak
+url = f"https://api.thingspeak.com/channels/{CHANNEL_ID}/feeds.json?results={NUM_RESULTS}"
+if READ_API_KEY:
+    url += f"&api_key={READ_API_KEY}"
+
+print(f"Descargando historial del canal {CHANNEL_ID}...")
+response = requests.get(url)
+
+if response.status_code != 200:
+    raise Exception(f"Error al conectar con ThingSpeak. Código HTTP: {response.status_code}")
+
+data = response.json()
+feeds = data.get("feeds", [])
+
+if not feeds:
+    raise Exception("El canal no contiene datos para analizar.")
+
+# 2. Procesamiento y limpieza con Pandas
+df = pd.DataFrame(feeds)
+
+# Conversión de tipos de datos
+df['created_at'] = pd.to_datetime(df['created_at'])
+df['Temperatura'] = pd.to_numeric(df['field1'], errors='coerce')
+df['Humedad'] = pd.to_numeric(df['field2'], errors='coerce')
+
+# Ajustar zona horaria (opcional, ejemplo UTC-3 para Argentina)
+df['created_at'] = df['created_at'].dt.tz_convert('America/Argentina/Buenos_Aires')
+
+# Eliminar filas con lecturas corruptas o vacías
+df = df.dropna(subset=['Temperatura', 'Humedad']).sort_values('created_at')
+df.set_index('created_at', inplace=True)
+
+# 3. Análisis Estadístico Automatizado
+temp_media = df['Temperatura'].mean()
+temp_max = df['Temperatura'].max()
+fecha_temp_max = df['Temperatura'].idxmax()
+temp_min = df['Temperatura'].min()
+
+hum_media = df['Humedad'].mean()
+hum_max = df['Humedad'].max()
+hum_min = df['Humedad'].min()
+
+# Conteo de eventos de sobrecalentamiento (> 35°C)
+alertas_df = df[df['Temperatura'] > UMBRAL_CRITICO]
+total_alertas = len(alertas_df)
+porcentaje_critico = (total_alertas / len(df)) * 100
+
+print("\n" + "="*55)
+print("     REPORTE DE AUDITORÍA AMBIENTAL (SERVIDORES)")
+print("="*55)
+print(f"Periodo analizado : {df.index.min().strftime('%Y-%m-%d %H:%M')} a {df.index.max().strftime('%Y-%m-%d %H:%M')}")
+print(f"Total de muestras : {len(df)} registros válidos\n")
+
+print("--- MÉTRICAS DE TEMPERATURA ---")
+print(f"• Promedio        : {temp_media:.2f} °C")
+print(f"• Pico Máximo     : {temp_max:.2f} °C (Registrado el {fecha_temp_max.strftime('%d/%m/%Y a las %H:%M:%S')})")
+print(f"• Mínimo          : {temp_min:.2f} °C\n")
+
+print("--- MÉTRICAS DE HUMEDAD ---")
+print(f"• Promedio        : {hum_media:.2f} %")
+print(f"• Pico Máximo     : {hum_max:.2f} %")
+print(f"• Mínimo          : {hum_min:.2f} %\n")
+
+print("--- INCIDENTES DE SOBRECALENTAMIENTO (> 35.0 °C) ---")
+print(f"• Muestras en alerta : {total_alertas} ({porcentaje_critico:.1f}% del tiempo registrado)")
+print("="*55 + "\n")
+
+# 4. Generación de Gráficos con Matplotlib
+plt.style.use('seaborn-v0_8-darkgrid')
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(13, 8), sharex=True)
+
+# Subplot 1: Temperatura
+ax1.plot(df.index, df['Temperatura'], color='#ef4444', linewidth=1.8, label='Temperatura (°C)')
+ax1.axhline(UMBRAL_CRITICO, color='#b91c1c', linestyle='--', linewidth=1.5, label=f'Umbral Crítico ({UMBRAL_CRITICO}°C)')
+ax1.axhline(temp_media, color='#f59e0b', linestyle=':', linewidth=1.2, label=f'Promedio ({temp_media:.1f}°C)')
+
+# Resaltar puntos que superan los 35°C
+if not alertas_df.empty:
+    ax1.scatter(alertas_df.index, alertas_df['Temperatura'], color='#7f1d1d', zorder=5, label='Evento de Alerta')
+
+ax1.set_title('Historial Térmico y Humedad Relativa — Sala de Servidores', fontsize=14, fontweight='bold', pad=12)
+ax1.set_ylabel('Temperatura (°C)', fontsize=11, fontweight='bold')
+ax1.legend(loc='upper right', frameon=True)
+
+# Subplot 2: Humedad
+ax2.plot(df.index, df['Humedad'], color='#3b82f6', linewidth=1.8, label='Humedad Relativa (%)')
+ax2.axhline(hum_media, color='#1d4ed8', linestyle=':', linewidth=1.2, label=f'Promedio ({hum_media:.1f}%)')
+ax2.set_ylabel('Humedad (%)', fontsize=11, fontweight='bold')
+ax2.set_xlabel('Fecha y Hora', fontsize=11, fontweight='bold')
+ax2.legend(loc='upper right', frameon=True)
+
+# Formateo del eje temporal
+ax2.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m %H:%M'))
+plt.xticks(rotation=30)
+plt.tight_layout()
+
+# Mostrar gráfico
+plt.show()
