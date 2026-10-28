@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NOC DataCenter Monitor - IoT SCADA</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-main: #060911;
+      --bg-card: rgba(15, 23, 42, 0.85);
+      --border-card: rgba(148, 163, 184, 0.12);
+      --text-muted: #94a3b8;
+      --temp-color: #f43f5e;
+      --hum-color: #38bdf8;
+      --ok-color: #10b981;
+      --warn-color: #f59e0b;
+      --purple-color: #a855f7;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: radial-gradient(circle at 50% 0%, #1e293b 0%, var(--bg-main) 75%);
+      color: #f8fafc;
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      padding: 20px 28px;
+      transition: background 0.5s ease;
+    }
+
+    body.modo-alerta {
+      background: radial-gradient(circle at 50% 0%, #650914 0%, #060911 80%);
+    }
+
+    /* BARRA SUPERIOR */
+    .header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 15px;
+      margin-bottom: 20px;
+      padding: 16px 22px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 14px;
+      backdrop-filter: blur(12px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .brand-icon {
+      background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 1.4rem;
+      box-shadow: 0 0 20px rgba(59, 130, 246, 0.4);
+    }
+
+    .brand-text h1 { font-size: 1.15rem; font-weight: 800; letter-spacing: 0.5px; }
+    .brand-text p { font-size: 0.78rem; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .slider-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255,255,255,0.04);
+      padding: 6px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border-card);
+      font-size: 0.8rem;
+    }
+
+    .btn {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #e2e8f0;
+      padding: 8px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 600;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn:hover { background: rgba(255, 255, 255, 0.14); transform: translateY(-1px); }
+    .btn-danger:hover { background: rgba(244, 63, 94, 0.25); border-color: var(--temp-color); }
+    .btn-export { background: rgba(16, 185, 129, 0.15); border-color: rgba(16, 185, 129, 0.4); color: #34d399; }
+
+    .live-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      color: var(--ok-color);
+      padding: 7px 14px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .dot {
+      width: 8px; height: 8px;
+      background-color: var(--ok-color);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--ok-color);
+      animation: pulse 1.4s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.4); opacity: 0.4; }
+    }
+
+    /* BANNER DE EMERGENCIA */
+    .alerta-banner {
+      display: none;
+      background: linear-gradient(90deg, #7f1d1d, #dc2626, #7f1d1d);
+      border: 2px solid #fca5a5;
+      color: #fff;
+      padding: 15px 20px;
+      border-radius: 12px;
+      margin-bottom: 20px;
+      font-weight: 800;
+      font-size: 1rem;
+      text-align: center;
+      letter-spacing: 0.5px;
+      box-shadow: 0 0 35px rgba(239, 68, 68, 0.75);
+      animation: latido 0.8s infinite alternate;
+    }
+
+    @keyframes latido {
+      from { transform: scale(0.996); }
+      to { transform: scale(1.004); box-shadow: 0 0 50px rgba(239, 68, 68, 1); }
+    }
+
+    /* GRILLA DE 6 TARJETAS (KPIs) */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .card {
+      background: var(--bg-card);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-card);
+      border-radius: 14px;
+      padding: 18px 20px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card.card-peligro {
+      border: 2px solid #ef4444;
+      background: rgba(127, 29, 29, 0.4);
+      box-shadow: 0 0 30px rgba(239, 68, 68, 0.5);
+    }
+
+    .card-label {
+      color: var(--text-muted);
+      font-size: 0.73rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .card-value {
+      font-size: 2.2rem;
+      font-weight: 800;
+      font-family: 'JetBrains Mono', monospace;
+      margin-bottom: 8px;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 6px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 99px;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 50%;
+      transition: width 0.5s ease;
+    }
+
+    .card-sub {
+      color: var(--text-muted);
+      font-size: 0.76rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .pill {
+      padding: 2px 8px;
+      border-radius: 5px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+    }
+    .pill.warn { background: rgba(245, 158, 11, 0.25); color: #fbbf24; }
+    .pill.danger { background: rgba(239, 68, 68, 0.3); color: #fca5a5; }
+
+    /* GRÁFICOS Y TERMINAL */
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    @media (max-width: 950px) {
+      .main-grid { grid-template-columns: 1fr; }
+    }
+
+    .chart-box { position: relative; height: 270px; width: 100%; }
+
+    .bottom-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 18px;
+    }
+
+    @media (max-width: 950px) {
+      .bottom-grid { grid-template-columns: 1fr; }
+    }
+
+    /* CONSOLA TERMINAL DE EVENTOS */
+    .terminal {
+      background: #05070c;
+      border: 1px solid rgba(56, 189, 248, 0.2);
+      border-radius: 12px;
+      padding: 14px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.78rem;
+      height: 190px;
+      overflow-y: auto;
+      color: #cbd5e1;
+    }
+
+    .log-line { margin-bottom: 5px; line-height: 1.4; }
+    .log-time { color: #64748b; }
+    .log-ok { color: #34d399; }
+    .log-warn { color: #fbbf24; }
+    .log-crit { color: #f87171; font-weight: bold; }
+
+    .stats-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+      margin-top: 8px;
+    }
+    .stats-table td {
+      padding: 8px 4px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .stats-table td:last-child {
+      text-align: right;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- BARRA DE COMANDO -->
+  <header class="header">
+    <div class="brand">
+      <div class="brand-icon">🛡️</div>
+      <div class="brand-text">
+        <h1>SISTEMA SCADA — MONITOREO TÉRMICO DE RACK</h1>
+        <p>Nodo IoT: ESP8266 NodeMCU | Sensor: DHT11 Digital | Canal ThingSpeak: #3543378</p>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="slider-box">
+        <span>Umbral Alerta: <strong id="lblUmbral" style="color:#f43f5e;">35.0°C</strong></span>
+        <input type="range" id="inputUmbral" min="24" max="45" step="0.5" value="35.0" oninput="cambiarUmbral(this.value)">
+      </div>
+      <button class="btn btn-export" onclick="exportarCSV()">📥 Exportar Excel (.CSV)</button>
+      <button class="btn btn-danger" onclick="alternarSimulacion()">🚨 Simular Incendio/Fallo</button>
+      <div class="live-badge">
+        <div class="dot"></div>
+        <span id="estadoConexion">ONLINE</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- BANNER DE EMERGENCIA -->
+  <div id="bannerAlerta" class="alerta-banner">
+    🚨 PROTOCOLO DE EMERGENCIA ACTIVADO: SOBRECALENTAMIENTO CRÍTICO EN RACK PRINCIPAL — RIESGO DE APAGADO TÉRMICO 🚨
+  </div>
+
+  <!-- 6 TARJETAS DE INGENIERÍA (CALCULADAS CON EL MISMO DHT11) -->
+  <div class="kpi-grid">
+    <!-- 1. Temperatura -->
+    <div id="cardTemp" class="card">
+      <div class="card-label"><span>🌡️ Temperatura Rack</span><span>DHT11</span></div>
+      <div id="valTemp" class="card-value" style="color: var(--temp-color);">--.- °C</div>
+      <div class="progress-bar"><div id="barTemp" class="progress-fill" style="background: var(--temp-color);"></div></div>
+      <div class="card-sub">
+        <span id="minmaxTemp">Min: --° | Max: --°</span>
+        <span id="pillTemp" class="pill">NORMAL</span>
+      </div>
+    </div>
+
+    <!-- 2. Humedad -->
+    <div class="card">
+      <div class="card-label"><span>💧 Humedad Relativa</span><span>ASHRAE</span></div>
+      <div id="valHum" class="card-value" style="color: var(--hum-color);">--.- %</div>
+      <div class="progress-bar"><div id="barHum" class="progress-fill" style="background: var(--hum-color);"></div></div>
+      <div class="card-sub">
+        <span>Ideal: 40% a 60%</span>
+        <span id="pillHum" class="pill">ÓPTIMA</span>
+      </div>
+    </div>
+
+    <!-- 3. Punto de Rocío (Condensación) -->
+    <div class="card">
+      <div class="card-label"><span>❄️ Punto de Rocío</span><span>Fórmula Magnus</span></div>
+      <div id="valRocio" class="card-value" style="color: #67e8f9;">--.- °C</div>
+      <div class="progress-bar"><div id="barRocio" class="progress-fill" style="background: #06b6d4;"></div></div>
+      <div class="card-sub">
+        <span>Temp. de condensación</span>
+        <span class="pill">SIN GOTEO</span>
+      </div>
+    </div>
+
+    <!-- 4. Sensación Térmica (Heat Index) -->
+    <div class="card">
+      <div class="card-label"><span>🔥 Índice de Calor</span><span>Carga Térmica</span></div>
+      <div id="valHeat" class="card-value" style="color: var(--warn-color);">--.- °C</div>
+      <div class="progress-bar"><div id="barHeat" class="progress-fill" style="background: var(--warn-color);"></div></div>
+      <div class="card-sub">
+        <span>Estrés en disipadores</span>
+        <span id="pillHeat" class="pill">BAJO</span>
+      </div>
+    </div>
+
+    <!-- 5. Eficiencia Energética PUE Estimada -->
+    <div class="card">
+      <div class="card-label"><span>⚡ PUE Estimado</span><span>Eficiencia DataCenter</span></div>
+      <div id="valPUE" class="card-value" style="color: var(--purple-color);">1.--</div>
+      <div class="progress-bar"><div id="barPUE" class="progress-fill" style="background: var(--purple-color);"></div></div>
+      <div class="card-sub">
+        <span>Ideal &lt; 1.40</span>
+        <span id="pillPUE" class="pill">EFICIENTE</span>
+      </div>
+    </div>
+
+    <!-- 6. Sincronización -->
+    <div class="card">
+      <div class="card-label"><span>⏱️ Última Telemetría</span><span>REST API</span></div>
+      <div id="valHora" class="card-value" style="font-size: 1.75rem; color: #fff;">--:--:--</div>
+      <div class="progress-bar"><div class="progress-fill" style="width:100%; background: var(--ok-color);"></div></div>
+      <div class="card-sub">
+        <span id="valFecha">--/--/----</span>
+        <span id="valPing" class="pill">HTTP 200</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- GRÁFICOS EN VIVO -->
+  <div class="main-grid">
+    <div class="card">
+      <div class="card-label"><span>📈 Curva Histórica de Temperatura (°C)</span></div>
+      <div class="chart-box"><canvas id="chartTemp"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-label"><span>📊 Curva Histórica de Humedad Relativa (%)</span></div>
+      <div class="chart-box"><canvas id="chartHum"></canvas></div>
+    </div>
+  </div>
+
+  <!-- CONSOLA DE LOGS + RESUMEN DE AUDITORÍA -->
+  <div class="bottom-grid">
+    <div class="card">
+      <div class="card-label"><span>💻 Registro de Eventos del Sistema (Live Terminal Log)</span><span>AUTO-SCROLL</span></div>
+      <div id="terminalLog" class="terminal"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-label"><span>📋 Diagnóstico Automático del Rack</span></div>
+      <table class="stats-table">
+        <tr><td>Estado del Buzzer Físico (D3)</td><td id="tblBuzzer" style="color:#34d399;">EN ESPERA (OFF)</td></tr>
+        <tr><td>Riesgo Electroestático (ESD)</td><td id="tblESD">BAJO</td></tr>
+        <tr><td>Riesgo de Corrosión por Humedad</td><td id="tblCorrosion">NULO</td></tr>
+        <tr><td>Potencia Refrigeración Sugerida</td><td id="tblCooler">40% (Modo Eco)</td></tr>
+        <tr><td>Muestras Recibidas (Sesión)</td><td id="tblMuestras">0 paquetes</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const CHANNEL_ID = 3543378;
+    let UMBRAL_CRITICO = 35.0;
+    let simulando = false;
+    let historialDatos = [];
+    let ultimoTimestampLog = "";
+    let alertaVozEmitida = false;
+
+    function agregarLog(mensaje, tipo = 'ok') {
+      const term = document.getElementById('terminalLog');
+      const ahora = new Date().toLocaleTimeString('es-AR', { hour12: false });
+      const clase = tipo === 'crit' ? 'log-crit' : (tipo === 'warn' ? 'log-warn' : 'log-ok');
+      term.innerHTML += `<div class="log-line"><span class="log-time">[${ahora}]</span> <span class="${clase}">${mensaje}</span></div>`;
+      term.scrollTop = term.scrollHeight;
+    }
+
+    agregarLog("Iniciando interfaz SCADA de monitoreo térmico...", "ok");
+    agregarLog("Conectado al nodo ESP8266 mediante ThingSpeak Cloud (#3543378).", "ok");
+
+    // Fórmulas físicas reales usando Temp y Humedad
+    function calcularPuntoRocio(T, RH) {
+      const a = 17.27, b = 237.7;
+      const alpha = ((a * T) / (b + T)) + Math.log(RH / 100.0);
+      return (b * alpha) / (a - alpha);
+    }
+
+    function calcularIndiceCalor(T, RH) {
+      // Aproximación Steadman / Rothfusz en °C
+      return T + 0.33 * ((RH / 100) * 6.105 * Math.exp((17.27 * T) / (237.7 + T))) - 4.0;
+    }
+
+    // Sonido de Sirena + Voz Sintética de Windows/Navegador
+    function dispararEfectosSonoros(temp) {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(920, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.3);
+        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.32);
+
+        if (!alertaVozEmitida && 'speechSynthesis' in window) {
+          const msg = new SpeechSynthesisUtterance(`Alerta crítica en sala de servidores. Temperatura actual: ${temp.toFixed(1)} grados Celsius.`);
+          msg.lang = 'es-ES';
+          msg.rate = 1.05;
+          window.speechSynthesis.speak(msg);
+          alertaVozEmitida = true;
+        }
+      } catch (e) {}
+    }
+
+    function cambiarUmbral(val) {
+      UMBRAL_CRITICO = parseFloat(val);
+      document.getElementById('lblUmbral').textContent = `${UMBRAL_CRITICO.toFixed(1)}°C`;
+      agregarLog(`Umbral crítico ajustado manualmente a ${UMBRAL_CRITICO.toFixed(1)} °C.`, 'warn');
+      if (historialDatos.length > 0) {
+        const ult = historialDatos[historialDatos.length - 1];
+        procesarLectura(ult.temp, ult.hum, ult.fecha, false);
+      }
+    }
+
+    // Gráficos Chart.js
+    const opcionesBase = {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#64748b' }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(255,255,255,0.04)' } }
+      }
+    };
+
+    const chartTemp = new Chart(document.getElementById('chartTemp').getContext('2d'), {
+      type: 'line',
+      data: { labels: [], datasets: [{ data: [], borderColor: '#f43f5e', backgroundColor: 'rgba(244,63,94,0.15)', fill: true, tension: 0.35, borderWidth: 2.5 }] },
+      options: opcionesBase
+    });
+
+    const chartHum = new Chart(document.getElementById('chartHum').getContext('2d'), {
+      type: 'line',
+      data: { labels: [], datasets: [{ data: [], borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.15)', fill: true, tension: 0.35, borderWidth: 2.5 }] },
+      options: opcionesBase
+    });
+
+    function procesarLectura(temp, hum, fechaObj, registrarEnLog = true) {
+      const rocio = calcularPuntoRocio(temp, hum);
+      const heat = calcularIndiceCalor(temp, hum);
+      const pue = 1.15 + Math.max(0, (temp - 20) * 0.025);
+
+      document.getElementById('valTemp').textContent = `${temp.toFixed(1)} °C`;
+      document.getElementById('valHum').textContent = `${hum.toFixed(1)} %`;
+      document.getElementById('valRocio').textContent = `${rocio.toFixed(1)} °C`;
+      document.getElementById('valHeat').textContent = `${heat.toFixed(1)} °C`;
+      document.getElementById('valPUE').textContent = pue.toFixed(2);
+      document.getElementById('valHora').textContent = fechaObj.toLocaleTimeString('es-AR', { hour12: false });
+      document.getElementById('valFecha').textContent = fechaObj.toLocaleDateString('es-AR');
+
+      // Barras de progreso
+      document.getElementById('barTemp').style.width = `${Math.min(100, (temp / 50) * 100)}%`;
+      document.getElementById('barHum').style.width = `${Math.min(100, hum)}%`;
+      document.getElementById('barRocio').style.width = `${Math.min(100, (rocio / 35) * 100)}%`;
+      document.getElementById('barHeat').style.width = `${Math.min(100, (heat / 55) * 100)}%`;
+      document.getElementById('barPUE').style.width = `${Math.min(100, ((pue - 1) / 1.2) * 100)}%`;
+
+      // Diagnóstico inteligente en la tabla
+      document.getElementById('tblESD').textContent = hum < 35 ? "ALTO (Ambiente Seco)" : "BAJO (Seguro)";
+      document.getElementById('tblCorrosion').textContent = hum > 65 ? "MODERADO (>65%)" : "NULO (Óptimo)";
+      document.getElementById('tblCooler').textContent = temp > UMBRAL_CRITICO ? "100% (TURBO EMERGENCIA)" : (temp > 27 ? "75% (Activo)" : "40% (Modo Eco)");
+
+      // Evaluación de Alerta Crítica
+      const enPeligro = temp > UMBRAL_CRITICO || simulando;
+      const banner = document.getElementById('bannerAlerta');
+      const cardTemp = document.getElementById('cardTemp');
+      const pillTemp = document.getElementById('pillTemp');
+      const tblBuzzer = document.getElementById('tblBuzzer');
+
+      if (enPeligro) {
+        banner.style.display = 'block';
+        cardTemp.classList.add('card-peligro');
+        document.body.classList.add('modo-alerta');
+        pillTemp.textContent = "¡CRÍTICO!";
+        pillTemp.className = "pill danger";
+        tblBuzzer.textContent = "SONANDO (2500 Hz)";
+        tblBuzzer.style.color = "#f87171";
+        dispararEfectosSonoros(temp);
+        if (registrarEnLog) agregarLog(`¡ALERTA! Temperatura crítica detectada: ${temp.toFixed(1)} °C (Supera umbral de ${UMBRAL_CRITICO} °C)`, 'crit');
+      } else {
+        banner.style.display = 'none';
+        cardTemp.classList.remove('card-peligro');
+        document.body.classList.remove('modo-alerta');
+        pillTemp.textContent = "NORMAL";
+        pillTemp.className = "pill";
+        tblBuzzer.textContent = "EN ESPERA (OFF)";
+        tblBuzzer.style.color = "#34d399";
+        alertaVozEmitida = false;
+        if (registrarEnLog) agregarLog(`Telemetría recibida OK -> Temp: ${temp.toFixed(1)}°C | Hum: ${hum.toFixed(1)}% | Rocío: ${rocio.toFixed(1)}°C`, 'ok');
+      }
+    }
+
+    function alternarSimulacion() {
+      simulando = !simulando;
+      if (simulando) {
+        agregarLog("SIMULACIÓN DE INCENDIO EN RACK INICIADA POR EL OPERADOR.", "crit");
+        procesarLectura(39.8, 72.0, new Date(), true);
+      } else {
+        agregarLog("Simulación desactivada. Volviendo a lecturas reales del sensor DHT11.", "warn");
+        obtenerDatosThingSpeak();
+      }
+    }
+
+    // Exportar datos a Excel (CSV)
+    function exportarCSV() {
+      if (historialDatos.length === 0) return alert("Todavía no hay datos cargados para exportar.");
+      let csv = "Fecha,Hora,Temperatura_C,Humedad_Porcentaje,Punto_Rocio_C,Estado\n";
+      historialDatos.forEach(d => {
+        const rocio = calcularPuntoRocio(d.temp, d.hum).toFixed(1);
+        const estado = d.temp > UMBRAL_CRITICO ? "ALERTA_CRITICA" : "NORMAL";
+        csv += `${d.fecha.toLocaleDateString('es-AR')},${d.fecha.toLocaleTimeString('es-AR', {hour12:false})},${d.temp},${d.hum},${rocio},${estado}\n`;
+      });
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `Reporte_Rack_Servidor_${new Date().toISOString().slice(0,10)}.csv`;
+      link.click();
+      agregarLog("Reporte de auditoría exportado en formato Excel (.CSV).", "warn");
+    }
+
+    async function obtenerDatosThingSpeak() {
+      if (simulando) return;
+      try {
+        const res = await fetch(`https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?results=15`);
+        const data = await res.json();
+        const feeds = data.feeds;
+        if (!feeds || feeds.length === 0) return;
+
+        const etiquetas = [], datosT = [], datosH = [];
+        historialDatos = [];
+
+        feeds.forEach(f => {
+          if (f.field1 && f.field2) {
+            const fecha = new Date(f.created_at);
+            const t = parseFloat(f.field1);
+            const h = parseFloat(f.field2);
+            etiquetas.push(fecha.toLocaleTimeString('es-AR', { hour12: false }));
+            datosT.push(t);
+            datosH.push(h);
+            historialDatos.push({ temp: t, hum: h, fecha: fecha, id: f.entry_id });
+          }
+        });
+
+        // Calcular Mínimo y Máximo
+        const minT = Math.min(...datosT).toFixed(1);
+        const maxT = Math.max(...datosT).toFixed(1);
+        document.getElementById('minmaxTemp').textContent = `Min: ${minT}° | Max: ${maxT}°`;
+        document.getElementById('tblMuestras').textContent = `${historialDatos.length} paquetes`;
+
+        chartTemp.data.labels = etiquetas;
+        chartTemp.data.datasets[0].data = datosT;
+        chartTemp.update();
+
+        chartHum.data.labels = etiquetas;
+        chartHum.data.datasets[0].data = datosH;
+        chartHum.update();
+
+        const ult = historialDatos[historialDatos.length - 1];
+        const esNuevo = ult.id !== ultimoTimestampLog;
+        ultimoTimestampLog = ult.id;
+
+        procesarLectura(ult.temp, ult.hum, ult.fecha, esNuevo);
+      } catch (err) {
+        document.getElementById('estadoConexion').textContent = "RECONECTANDO...";
+      }
+    }
+
+    obtenerDatosThingSpeak();
+    setInterval(obtenerDatosThingSpeak, 5000);
+  </script>
+</body>
+</html>
