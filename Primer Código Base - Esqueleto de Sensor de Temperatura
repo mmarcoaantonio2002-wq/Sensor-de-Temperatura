@@ -1,0 +1,109 @@
+# ==============================================================================
+# CÓDIGO BASE DE MONITOREO Y ALARMA PARA SENSOR (SIMULACIÓN EN GOOGLE COLAB)
+# ==============================================================================
+
+import time
+import random
+import numpy as np
+import matplotlib.pyplot as plt
+from IPython.display import clear_output, display, HTML
+import ipywidgets as widgets
+
+# --- 1. CONFIGURACIÓN DE INTERFAZ INTERACTIVA ---
+umbral_widget = widgets.IntSlider(
+    value=75,
+    min=0,
+    max=100,
+    step=1,
+    description='Límite (%):',
+    continuous_update=False
+)
+
+print("Ajusta el porcentaje límite para la alarma:")
+display(umbral_widget)
+
+# --- 2. FUNCIÓN PARA LEER EL SENSOR ---
+def leer_sensor():
+    """
+    Simula la lectura de un sensor en porcentaje (0-100%).
+    REEMPLAZAR ESTA FUNCIÓN si en el futuro conectas hardware real
+    (ej. API HTTP, lecturas de microcontrolador por Serial, etc.).
+    """
+    # Genera un valor simulado que fluctúa dinámicamente
+    base = (time.time() * 10) % 100  # Sube y baja cíclicamente
+    ruido = random.uniform(-5, 5)
+    porcentaje = np.clip(base + ruido, 0, 100)
+    return round(porcentaje, 2)
+
+# --- 3. FUNCIÓN DE REPRODUCCIÓN DE SONIDO EN EL NAVEGADOR ---
+def reproducir_sonido_alarma():
+    """Utiliza la API de Audio del navegador para generar un pitido de alarma."""
+    js_code = """
+    <script>
+    function playAlarm() {
+        var ctx = new (window.AudioContext || window.webkitAudioContext)();
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(880, ctx.currentTime); // Tono de alarma (880Hz)
+        gain.gain.setValueAtTime(0.1, ctx.currentTime);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.8); // Duración: 0.8 segundos
+    }
+    playAlarm();
+    </script>
+    """
+    display(HTML(js_code))
+
+# --- 4. BUCLE PRINCIPAL DE MONITORIZACIÓN ---
+historial_lecturas = []
+historial_tiempo = []
+max_puntos = 30  # Ventana del gráfico
+
+print("\nIniciando monitorización...")
+time.sleep(1)
+
+try:
+    for i in range(100):  # Se ejecutará durante 100 iteraciones
+        valor_actual = leer_sensor()
+        umbral_actual = umbral_widget.value
+
+        historial_lecturas.append(valor_actual)
+        historial_tiempo.append(i)
+
+        if len(historial_lecturas) > max_puntos:
+            historial_lecturas.pop(0)
+            historial_tiempo.pop(0)
+
+        # Limpiar salida previa para actualizar pantalla limpia
+        clear_output(wait=True)
+        display(umbral_widget)
+
+        # Evaluar la condición de alarma
+        alarma_disparada = valor_actual >= umbral_actual
+
+        # Crear la gráfica interactiva
+        plt.figure(figsize=(9, 4))
+        plt.plot(historial_tiempo, historial_lecturas, marker='o', color='b' if not alarma_disparada else 'r', label='Lectura Sensor (%)')
+        plt.axhline(y=umbral_actual, color='orange', linestyle='--', linewidth=2, label=f'Umbral ({umbral_actual}%)')
+        plt.ylim(0, 105)
+        plt.xlabel('Tiempo (s)')
+        plt.ylabel('Porcentaje (%)')
+        plt.title('Monitor de Sensor en Tiempo Real')
+        plt.grid(True, linestyle=':', alpha=0.6)
+        plt.legend(loc='upper left')
+        plt.show()
+
+        # Mostrar panel de estado
+        if alarma_disPARADA := (valor_actual >= umbral_actual):
+            display(HTML(f"<h2 style='color:red; background-color:#ffe6e6; padding:10px; text-align:center;'>🚨 ¡ALARMA DISPARADA! Nivel actual: {valor_actual}% (Límite: {umbral_actual}%)</h2>"))
+            reproducir_sonido_alarma()
+        else:
+            display(HTML(f"<h3 style='color:green; text-align:center;'>✅ Estado Normal. Nivel actual: {valor_actual}%</h3>"))
+
+        time.sleep(1)
+
+except KeyboardInterrupt:
+    print("\nMonitorización detenida manualmente.")
