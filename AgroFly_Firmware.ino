@@ -156,4 +156,4 @@ void enviarTelemetriaThingSpeak() {
     ThingSpeak.setField(3, nivelLuzActual); // Campo 3 para el nuevo sensor LDR
     ThingSpeak.writeFields(SECRET_CH_ID, SECRET_WRITE_APIKEY);
   }
-} (Este codigo mando un compañero, esta bien?
+}
