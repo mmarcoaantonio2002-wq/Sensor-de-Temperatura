@@ -2,153 +2,158 @@
 #include <DHT.h>
 #include <ThingSpeak.h>
 
-// ================= CONFIGURACIÓN DE USUARIO =================
+// ================= CONFIGURACIÓN DE CREDENCIALES =================
 const char* WIFI_SSID = "Portal_IS-IR";
 const char* WIFI_PASS = "S4telit3";
 
-unsigned long SECRET_CH_ID = 3543378;                  
-const char* SECRET_WRITE_APIKEY = "GQ74YWTHQR33J57K";  
-// ============================================================
+const unsigned long SECRET_CH_ID = 3543378;
+const char* SECRET_WRITE_APIKEY = "GQ74YWTHQR33J57K";
+// =================================================================
 
-// Definición fija de pines según hardware armado
-#define PIN_DHT    14  // D5 (GPIO 14) - Cable amarillo DHT11
-#define PIN_LED    5   // D1 (GPIO 5)  - LED Rojo de Alerta
-#define PIN_BUZZER 0   // D3 (GPIO 0)  - Buzzer (cambiar a 12 si usan D6)
+// ================= DEFINICIÓN DE PINES Y HARDWARE ================
+#define PIN_DHT    14    // D5 (GPIO 14) - Sensor de Temperatura y Humedad DHT11
+#define PIN_LDR    A0    // A0 (ADC0)    - 2do Sensor: Fotorresistencia LDR (Luz ambiental en pista)
+#define PIN_BUZZER 12    // D6 (GPIO 12) - 2do Actuador: Buzzer sonoro de alerta
 #define DHTTYPE    DHT11
 
-const float UMBRAL_TEMP = 35.0; // °C (bajar a 30.0 si quieren disparar alerta más fácil en el video)
+// Pines del bloque LED de pista (incluye pines de esquina por compatibilidad física)
+const int PINES_LED[] = {1, 3, 16, 5, 4, 0};
+const int CANT_PINES_LED = 6;
 
-// Intervalos de temporización no bloqueante (millis)
-const unsigned long INTERVALO_LECTURA    = 2000;   // 2 segundos
-const unsigned long INTERVALO_THINGSPEAK = 15000;  // 15 segundos
-const unsigned long INTERVALO_ALARMA     = 300;    // 300 ms
-const unsigned long INTERVALO_WIFI       = 10000;  // 10 segundos
+// ================= CONSTANTES Y UMBRALES OPERATIVOS ==============
+// Cambiá UMBRAL_TEMP a 20.0 para grabar el Punto 3 (Video en estado de ALERTA)
+// Dejalo en 32.0 para estado NORMAL (LED fijo)
+const float UMBRAL_TEMP = 32.0;          
+const int UMBRAL_LUZ_BAJA = 300;         // Umbral analógico (0-1023) para detección de visibilidad en pista
 
+const unsigned long INTERVALO_LECTURA    = 2000;  // 2 s entre lecturas de sensores
+const unsigned long INTERVALO_THINGSPEAK = 15000; // 15 s entre envíos a la nube
+const unsigned long INTERVALO_ALARMA     = 250;   // 250 ms para baliza estroboscópica y sirena
+
+// ================= OBJETOS Y VARIABLES GLOBALES ==================
 DHT dht(PIN_DHT, DHTTYPE);
 WiFiClient client;
 
 unsigned long ultimoTiempoLectura    = 0;
 unsigned long ultimoTiempoThingSpeak = 0;
 unsigned long ultimoTiempoAlarma     = 0;
-unsigned long ultimoTiempoWiFi       = 0;
 
-float temperaturaActual = 0.0;
-float humedadActual     = 0.0;
-bool alarmaActiva       = false;
-bool estadoPulsoAlarma  = false;
+float temperaturaActual = 25.0;
+float humedadActual     = 60.0;
+int nivelLuzActual      = 500;
 
-// Prototipos de funciones auxiliares
+bool alarmaTermicaActiva = false;
+bool bajaVisibilidad     = false;
+bool estadoPulsoAlerta   = false;
+
+// ================= PROTOTIPOS DE FUNCIONES AUXILIARES ============
 void inicializarHardware();
-void gestionarWiFi(unsigned long tiempoActual);
-void leerSensores(unsigned long tiempoActual);
-void evaluarAlertaTermica();
-void controlarActuadores(unsigned long tiempoActual);
-void enviarTelemetriaThingSpeak(unsigned long tiempoActual);
+void inicializarComunicaciones();
+void establecerEstadoLED(int estado);
+void leerSensores();
+void evaluarEstadoSistema();
+void gestionarActuadores(unsigned long tiempoActual);
+void enviarTelemetriaThingSpeak();
 
+// ================= FUNCIÓN PRINCIPAL DE ARRANQUE =================
 void setup() {
-  Serial.begin(115200);
   inicializarHardware();
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  ThingSpeak.begin(client);
-  Serial.println(F("\n[SISTEMA] AgroFly Thermal Guardian iniciado (Modo No Bloqueante)."));
+  inicializarComunicaciones();
 }
 
+// ================= BUCLE PRINCIPAL NO BLOQUEANTE =================
 void loop() {
   unsigned long tiempoActual = millis();
 
-  gestionarWiFi(tiempoActual);
-  leerSensores(tiempoActual);
-  evaluarAlertaTermica();
-  controlarActuadores(tiempoActual);
-  enviarTelemetriaThingSpeak(tiempoActual);
+  // 1. Tarea periódica: Lectura de sensores y evaluación de umbrales
+  if (tiempoActual - ultimoTiempoLectura >= INTERVALO_LECTURA) {
+    ultimoTiempoLectura = tiempoActual;
+    leerSensores();
+    evaluarEstadoSistema();
+  }
+
+  // 2. Tarea continua: Control no bloqueante de actuadores (LED de pista + Buzzer)
+  gestionarActuadores(tiempoActual);
+
+  // 3. Tarea periódica: Transmisión de telemetría a ThingSpeak
+  if (tiempoActual - ultimoTiempoThingSpeak >= INTERVALO_THINGSPEAK) {
+    ultimoTiempoThingSpeak = tiempoActual;
+    enviarTelemetriaThingSpeak();
+  }
 }
 
-// ================= FUNCIONES AUXILIARES =================
+// ================= IMPLEMENTACIÓN DE FUNCIONES ===================
 
 void inicializarHardware() {
-  pinMode(PIN_LED, OUTPUT);
+  // Habilitar pines TX/RX como GPIO estándar para el LED externo de la maqueta
+  pinMode(1, FUNCTION_3);
+  pinMode(3, FUNCTION_3);
+
+  for (int i = 0; i < CANT_PINES_LED; i++) {
+    pinMode(PINES_LED[i], OUTPUT);
+  }
+
   pinMode(PIN_BUZZER, OUTPUT);
-  digitalWrite(PIN_LED, LOW);
-  noTone(PIN_BUZZER);
   digitalWrite(PIN_BUZZER, LOW);
+
+  // Estado inicial: Pista iluminada y buzzer apagado
+  establecerEstadoLED(HIGH);
   dht.begin();
 }
 
-void gestionarWiFi(unsigned long tiempoActual) {
-  if (WiFi.status() == WL_CONNECTED) return;
+void inicializarComunicaciones() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  ThingSpeak.begin(client);
+}
 
-  if (tiempoActual - ultimoTiempoWiFi >= INTERVALO_WIFI) {
-    ultimoTiempoWiFi = tiempoActual;
-    Serial.println(F("[WIFI] Reintentando conexion..."));
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
+void establecerEstadoLED(int estado) {
+  for (int i = 0; i < CANT_PINES_LED; i++) {
+    digitalWrite(PINES_LED[i], estado);
   }
 }
 
-void leerSensores(unsigned long tiempoActual) {
-  if (tiempoActual - ultimoTiempoLectura >= INTERVALO_LECTURA) {
-    ultimoTiempoLectura = tiempoActual;
+void leerSensores() {
+  // Lectura del Sensor 1: DHT11 (Temperatura del motor y Humedad relativa)
+  float t = dht.readTemperature();
+  float h = dht.readHumidity();
 
-    float t = dht.readTemperature();
-    float h = dht.readHumidity();
-
-    if (isnan(t) || isnan(h)) {
-      Serial.println(F("[AVISO] Error de lectura en DHT11 (verificar cable D5)."));
-      return;
-    }
-
+  if (!isnan(t) && !isnan(h)) {
     temperaturaActual = t;
-    humedadActual     = h;
-
-    Serial.printf("[SENSOR] Temp: %.1f C | Hum: %.1f %% | Alerta: %s | WiFi: %s\n",
-                  temperaturaActual, humedadActual,
-                  alarmaActiva ? "SI" : "NO",
-                  (WiFi.status() == WL_CONNECTED) ? "CONECTADO" : "BUSCANDO...");
+    humedadActual = h;
   }
+
+  // Lectura del Sensor 2: LDR en A0 (Luminosidad / Visibilidad en pista)
+  nivelLuzActual = analogRead(PIN_LDR);
 }
 
-void evaluarAlertaTermica() {
-  alarmaActiva = (temperaturaActual > UMBRAL_TEMP);
+void evaluarEstadoSistema() {
+  alarmaTermicaActiva = (temperaturaActual > UMBRAL_TEMP);
+  bajaVisibilidad     = (nivelLuzActual < UMBRAL_LUZ_BAJA);
 }
 
-void controlarActuadores(unsigned long tiempoActual) {
-  if (!alarmaActiva) {
-    estadoPulsoAlarma = false;
-    digitalWrite(PIN_LED, LOW);
-    noTone(PIN_BUZZER);
+void gestionarActuadores(unsigned long tiempoActual) {
+  if (alarmaTermicaActiva) {
+    // MODO ALERTA: Parpadeo rápido del LED de pista + pitido intermitente del Buzzer con millis()
+    if (tiempoActual - ultimoTiempoAlarma >= INTERVALO_ALARMA) {
+      ultimoTiempoAlarma = tiempoActual;
+      estadoPulsoAlerta = !estadoPulsoAlerta;
+
+      establecerEstadoLED(estadoPulsoAlerta ? HIGH : LOW);
+      digitalWrite(PIN_BUZZER, estadoPulsoAlerta ? HIGH : LOW);
+    }
+  } else {
+    // MODO NORMAL: LED de pista encendido fijo (operación segura) y Buzzer en silencio
+    establecerEstadoLED(HIGH);
     digitalWrite(PIN_BUZZER, LOW);
-    return;
-  }
-
-  if (tiempoActual - ultimoTiempoAlarma >= INTERVALO_ALARMA) {
-    ultimoTiempoAlarma = tiempoActual;
-    estadoPulsoAlarma = !estadoPulsoAlarma;
-
-    if (estadoPulsoAlarma) {
-      digitalWrite(PIN_LED, HIGH);
-      tone(PIN_BUZZER, 2500);
-    } else {
-      digitalWrite(PIN_LED, LOW);
-      noTone(PIN_BUZZER);
-    }
   }
 }
 
-void enviarTelemetriaThingSpeak(unsigned long tiempoActual) {
-  if (tiempoActual - ultimoTiempoThingSpeak >= INTERVALO_THINGSPEAK) {
-    ultimoTiempoThingSpeak = tiempoActual;
-
-    if (WiFi.status() == WL_CONNECTED && temperaturaActual != 0.0) {
-      ThingSpeak.setField(1, temperaturaActual);
-      ThingSpeak.setField(2, humedadActual);
-      ThingSpeak.setField(3, alarmaActiva ? 1 : 0);
-
-      int codigoHTTP = ThingSpeak.writeFields(SECRET_CH_ID, SECRET_WRITE_APIKEY);
-      if (codigoHTTP == 200) {
-        Serial.println(F("[THINGSPEAK] Datos enviados correctamente (HTTP 200)."));
-      } else {
-        Serial.println("[THINGSPEAK] Error HTTP: " + String(codigoHTTP));
-      }
-    }
+void enviarTelemetriaThingSpeak() {
+  if (WiFi.status() == WL_CONNECTED) {
+    ThingSpeak.setField(1, temperaturaActual);
+    ThingSpeak.setField(2, humedadActual);
+    ThingSpeak.setField(3, nivelLuzActual); // Campo 3 para el nuevo sensor LDR
+    ThingSpeak.writeFields(SECRET_CH_ID, SECRET_WRITE_APIKEY);
   }
-}
+} (Este codigo mando un compañero, esta bien?
